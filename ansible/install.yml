@@ -26,6 +26,8 @@
         - liblapack-dev
         - pkg-config
         - libfreetype6-dev
+        - libpng-dev
+        - libpng-dev
         - python3-numpy
         - python3-scipy
         - python3-matplotlib
@@ -58,3 +60,4 @@
 
     - name: install prometheus client (son-monitor dependency)
       pip: name=prometheus_client version=latest executable=pip3
+
