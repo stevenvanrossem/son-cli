@@ -55,3 +55,6 @@
 
     - name: install docker python api (son-monitor dependency)
       pip: name=docker version=2.0.2 executable=pip3
+
+    - name: install prometheus client (son-monitor dependency)
+      pip: name=prometheus_client version=latest executable=pip3

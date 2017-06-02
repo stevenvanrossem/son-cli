@@ -46,7 +46,7 @@ or
 import argparse
 
 from son.monitor.son_emu import Emu
-from son.monitor.son_sp import sp
+from son.monitor.son_sp import Service_Platform
 
 import pprint
 pp = pprint.PrettyPrinter(indent=4)
@@ -75,16 +75,29 @@ SON_EMU_API = "http://{0}:{1}".format(SON_EMU_IP, SON_EMU_REST_API_PORT)
 # specify if son-emu is runnign in a seperate VM that has ssh login
 SON_EMU_IN_VM = False
 SON_EMU_USER = 'vagrant'
-SONE_EMU_PASSW = 'vagrant'
+SON_EMU_PASSW = 'vagrant'
 
-# initalize the vims accessible from the SDK
-emu = Emu(SON_EMU_API, ip= SON_EMU_IP, vm=SON_EMU_IN_VM, user=SON_EMU_USER, password=SONE_EMU_PASSW)
+# Monitoring manager in the SP
+SP_MONITOR_API = 'http://sp.int3.sonata-nfv.eu:8000/api/v1/'
+
+# local port where the streamed metrics are served to Prometheus
+PROMETHEUS_STREAM_PORT = 8082
 
 # tmp directories that will be mounted in the Prometheus and Grafana Docker containers by son-emu
 tmp_dir = '/tmp/son-monitor'
 docker_dir = '/tmp/son-monitor/docker'
 prometheus_dir = '/tmp/son-monitor/prometheus'
 grafana_dir = '/tmp/son-monitor/grafana'
+
+# Prometheus config info
+prometheus_server_api = 'http://127.0.0.1:9090'
+prometheus_config_path = '/tmp/son-monitor/prometheus/prometheus_sdk.yml'
+
+# initalize the vims accessible from the SDK
+emu = Emu(SON_EMU_API, ip= SON_EMU_IP, vm=SON_EMU_IN_VM, user=SON_EMU_USER, password=SON_EMU_PASSW)
+sp = Service_Platform(monitor_api=SP_MONITOR_API, export_port=PROMETHEUS_STREAM_PORT,
+                      prometheus_config_path=prometheus_config_path,
+                      prometheus_server_api=prometheus_server_api)
 
 class sonmonitor():
 
@@ -214,7 +227,7 @@ parser = argparse.ArgumentParser(description=description,
 # positional  arguments
 parser.add_argument(
     "command",
-    choices=['init', 'query', 'interface', 'flow_mon', 'flow_entry', 'flow_total', 'msd', 'dump', 'xterm'],
+    choices=['init', 'query', 'interface', 'flow_mon', 'flow_entry', 'flow_total', 'msd', 'dump', 'xterm', 'list', 'stream'],
     nargs=1,
     help="""Monitoring feature to be executed:
          interface: export interface metric (tx/rx bytes/packets)
@@ -225,6 +238,8 @@ parser.add_argument(
          msd :  start/stop monitoring metrics from the msd (monitoring descriptor file)
          dump: start tcpdump for specified interface (save as .pcap)
          xterm: start an x-terminal for specific vnf(s)
+         list: list the metrics available in the Service Platform
+         stream: stream metrics from the Service Platform
          """)
 
 parser.add_argument(
@@ -238,9 +253,9 @@ parser.add_argument(
           Action for init:
           start: start the monitoring framework (cAdvisor, Prometheus DB + Pushgateway)
           stop: stop the monitoring framework
-          Action for msd:
-          start: start exporting the monitoring metrics from the msd
-          stop: stop exporting the monitoring metrics from the msd
+          Action for msd/stream:
+          start: start exporting the monitoring metrics from the msd/SP
+          stop: stop exporting the monitoring metrics from the msd/SP
           """)
 
 # vnf names to start an xterm for
@@ -252,7 +267,7 @@ parser.add_argument(
 
 ## select the vim to execute the monitoring action on (default=emulator)
 parser.add_argument(
-    "--vim", "-v", dest="vim",
+    "--vim", dest="vim",
     default="emu",
     help="VIM where the command should be executed (emu/sp)")
 
@@ -314,8 +329,7 @@ parser.add_argument(
 ## arguments specific for metric/flow monitoring
 parser.add_argument(
     "--metric", "-me", dest="metric",
-    default='tx_packets',
-    help="tx_bytes, rx_bytes, tx_packets, rx_packets")
+    help="SDK or SP metric")
 parser.add_argument(
     "--cookie", "-c", dest="cookie",
     help="integer value to identify this flow monitor rule")
@@ -328,12 +342,24 @@ monitor = sonmonitor()
 
 # map the command and vim selections to the correct function
 def _execute_command(args):
+    # commands only implemented for the SP:
+    sp_cmds = ['list', 'stream']
     # commands inside this class:
     sonmonitor_cmds = {'init':monitor.init}
+
     if args["command"][0] in sonmonitor_cmds:
         cmd = args["command"][0]
         ret = sonmonitor_cmds[cmd](**args)
         logging.debug("cmd: {0} \nreturn: {1}".format(args["command"][0], ret))
+
+    elif args["command"][0] in sp_cmds:
+        args['vim'] = 'sp'
+        VIM_class = eval(args.get('vim'))
+        # call the VIM class method with the same name as the command arg
+        args['monitor'] = monitor
+        ret = getattr(VIM_class, args["command"][0])(**args)
+        logging.debug("cmd: {0} \nreturn: {1}".format(args["command"][0], ret))
+        pp.pprint(ret)
 
     elif args["command"] is not None:
         VIM_class = eval(args.get('vim'))
@@ -341,8 +367,8 @@ def _execute_command(args):
         args['monitor'] = monitor
         ret = getattr(VIM_class, args["command"][0])(**args)
         logging.debug("cmd: {0} \nreturn: {1}".format(args["command"][0], ret))
-
         pp.pprint(ret)
+
     else:
         logging.error("Command not implemented: {0}".format(args.get("command")))
 
