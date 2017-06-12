@@ -60,4 +60,3 @@
 
     - name: install prometheus client (son-monitor dependency)
       pip: name=prometheus_client version=latest executable=pip3
-
