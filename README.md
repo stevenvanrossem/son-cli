@@ -286,6 +286,8 @@ usage: son-monitor [-h]
 
 optional arguments:
   -h, --help            show this help message and exit
+  --verbose, -v         print extra logging
+
 
 son-monitor subcommands:
   init : start/stop the monitoring framework
