@@ -53,6 +53,8 @@ pp = pprint.PrettyPrinter(indent=4)
 
 import logging
 logging.basicConfig(level=logging.INFO)
+LOG = logging.getLogger('son_monitor')
+LOG.setLevel(level=logging.INFO)
 
 import docker
 from subprocess import Popen
@@ -79,9 +81,14 @@ SON_EMU_PASSW = 'vagrant'
 
 # Monitoring manager in the SP
 SP_MONITOR_API = 'http://sp.int3.sonata-nfv.eu:8000/api/v1/'
+# Gatekeeper api in the SP
+GK_API = 'http://sp.int3.sonata-nfv.eu:32001/api/v2/'
 
 # local port where the streamed metrics are served to Prometheus
 PROMETHEUS_STREAM_PORT = 8082
+
+# son-access config file (initialized by son-access workspace creation)
+SON_ACCESS_CONFIG_PATH = "/home/steven/.son-workspace"
 
 # tmp directories that will be mounted in the Prometheus and Grafana Docker containers by son-emu
 tmp_dir = '/tmp/son-monitor'
@@ -94,10 +101,13 @@ prometheus_server_api = 'http://127.0.0.1:9090'
 prometheus_config_path = '/tmp/son-monitor/prometheus/prometheus_sdk.yml'
 
 # initalize the vims accessible from the SDK
-emu = Emu(SON_EMU_API, ip= SON_EMU_IP, vm=SON_EMU_IN_VM, user=SON_EMU_USER, password=SON_EMU_PASSW)
-sp = Service_Platform(monitor_api=SP_MONITOR_API, export_port=PROMETHEUS_STREAM_PORT,
-                      prometheus_config_path=prometheus_config_path,
-                      prometheus_server_api=prometheus_server_api)
+#emu = Emu(SON_EMU_API, ip= SON_EMU_IP, vm=SON_EMU_IN_VM, user=SON_EMU_USER, password=SON_EMU_PASSW)
+# sp = Service_Platform(export_port=PROMETHEUS_STREAM_PORT, GK_api=GK_API,
+#                       monitor_api=SP_MONITOR_API,
+#                       prometheus_config_path=prometheus_config_path,
+#                       prometheus_server_api=prometheus_server_api,
+#                       son_access_config_path=SON_ACCESS_CONFIG_PATH,
+#                       platform_id='sp1')
 
 class sonmonitor():
 
@@ -111,13 +121,19 @@ class sonmonitor():
         # status of son-monitor
         self.started = False
 
-    def init(self, action, **kwargs):
+    # def init(self, action, **kwargs):
+    #     #startup SONATA SDK environment (cAdvisor, Prometheus, PushGateway, son-emu(experimental))
+    #     actions = {'start': self.start_containers, 'stop': self.stop_containers}
+    #     return actions[action](**kwargs)
+    def init(self, args):
+        LOG.info("son-monitor init")
+        action = args.action
         #startup SONATA SDK environment (cAdvisor, Prometheus, PushGateway, son-emu(experimental))
         actions = {'start': self.start_containers, 'stop': self.stop_containers}
-        return actions[action](**kwargs)
+        return actions[action]()
 
     # start the sdk monitoring framework (cAdvisor, Prometheus, Pushgateway, ...)
-    def start_containers(self, **kwargs):
+    def start_containers(self):
         # docker-compose up -d
         cmd = [
             'docker-compose',
@@ -167,6 +183,7 @@ class sonmonitor():
         self.started = False
         wait_time = 0
         while not self.started:
+            emu = Emu(SON_EMU_API, ip=SON_EMU_IP, vm=SON_EMU_IN_VM, user=SON_EMU_USER, password=SON_EMU_PASSW)
             list1 = emu.docker_client.containers.list(filters={'status':'running', 'name':'prometheus'})
             list2 = emu.docker_client.containers.list(filters={'status': 'running', 'name': 'grafana'})
             if len(list1+list2) >= 2:
@@ -181,7 +198,7 @@ class sonmonitor():
         return 'son-monitor started'
 
     # stop the sdk monitoring framework
-    def stop_containers(self, **kwargs):
+    def stop_containers(self):
         # docker-compose down, remove volumes
         cmd = [
             'docker-compose',
@@ -202,8 +219,38 @@ class sonmonitor():
         self.started = False
         return 'son-monitor stopped'
 
-## cli parser
+    # start a monitoring action on the Service Platform
+    def SP_command(self, args):
+        command = args.command
+        SP_class = Service_Platform(export_port=PROMETHEUS_STREAM_PORT, GK_api=GK_API,
+                                    monitor_api=SP_MONITOR_API,
+                                    prometheus_config_path=prometheus_config_path,
+                                    prometheus_server_api=prometheus_server_api,
+                                    son_access_config_path=SON_ACCESS_CONFIG_PATH,
+                                    platform_id=args.sp)
+        # call the SP class method with the same name as the command arg
+        args = vars(args)
+        args['monitor'] = self
+        ret = getattr(SP_class, command)(**args)
+        logging.debug("cmd: {0} \nreturn: {1}".format(command, ret))
+        pp.pprint(ret)
 
+
+    # start a monitoring action on the Emulator
+    def EMU_command(self, args):
+        command = args.command
+        EMU_class = Emu(SON_EMU_API, ip=SON_EMU_IP, vm=SON_EMU_IN_VM, user=SON_EMU_USER, password=SON_EMU_PASSW)
+        # call the EMU class method with the same name as the command arg
+        args = vars(args)
+        args['monitor'] = self
+        ret = getattr(EMU_class, command)(**args)
+        logging.debug("cmd: {0} \nreturn: {1}".format(command, ret))
+        pp.pprint(ret)
+
+
+
+monitor = sonmonitor()
+## cli parser
 description = """
     Install monitor features or get monitor data from the SONATA platform/emulator.
     """
@@ -218,161 +265,256 @@ Specialized usage:
     son-monitor query --vim emu -d datacenter1 -vnf vnf1 -q 'sum(rate(container_cpu_usage_seconds_total{id="/docker/<uuid>"}[10s]))'
     """
 
-#   son-monitor flow_total start -src vnf1  -dst vnf2  -ma "dl_type=0x0800,nw_proto=17,udp_dst=5001"  -b -c 11 -me tx_bytes
-#   son-monitor query --vim emu -d datacenter1 -vnf vnf1 -q 'sum(rate(container_cpu_usage_seconds_total{id="/docker/<uuid>"}[10s]))'
-
 parser = argparse.ArgumentParser(description=description,
                         formatter_class=argparse.RawTextHelpFormatter,
                         epilog=examples)
 # positional  arguments
-parser.add_argument(
-    "command",
-    choices=['init', 'query', 'interface', 'flow_mon', 'flow_entry', 'flow_total', 'msd', 'dump', 'xterm', 'list', 'stream'],
-    nargs=1,
-    help="""Monitoring feature to be executed:
-         interface: export interface metric (tx/rx bytes/packets)
-         flow_entry : (un)set the flow entry
-         flow_mon : export flow_entry metric (tx/rx bytes/packets)
-         flow_total : flow_entry + flow_mon
-         init : start/stop the monitoring framework
-         msd :  start/stop monitoring metrics from the msd (monitoring descriptor file)
-         dump: start tcpdump for specified interface (save as .pcap)
-         xterm: start an x-terminal for specific vnf(s)
-         list: list the metrics available in the Service Platform
-         stream: stream metrics from the Service Platform
-         """)
+subparsers = parser.add_subparsers(title="son-monitor subcommands",
+description="""Monitoring feature to be executed:
+init : start/stop the monitoring framework
+msd :  start/stop monitoring metrics defined in the MSD (monitoring descriptor file)
+stream: stream monitored metrics from a Service Platform
+query: query monitored metrics from the Service platform or the Emulator
+dump: start tcpdump for specified interface (save as .pcap)
+xterm: start an x-terminal for specific vnf(s)
+interface: export interface metric (tx/rx bytes/packets) from the emulator network
+flow : set a flow and export its metrics in the emulator network
+flow_mon: export the metrics of an existing flow entry in the emulator network
+""",
+help="Execute one of these monitor actions")
 
-parser.add_argument(
+
+stream_auth = subparsers.add_parser('stream_auth',formatter_class=argparse.RawTextHelpFormatter,
+                                    description="Get monitor data from the SONATA Service Platform. (Authentication must be configured first via son-access)")
+stream_auth.add_argument(
+    "--metric", "-me", dest="metric",
+    help="SP metric")
+stream_auth.add_argument(
+    "--vnf_id", "-vnf", dest="vnf_name",
+    help="vnf_id to be monitored")
+stream_auth.add_argument(
+    "--service", "-s", dest="service",
+    default=None,
+    help="Service name that includes the VNT to be monitored")
+stream_auth.add_argument(
+    "--sp", "-sp", dest="sp",
+    default="sp1",
+    help="Service Platform ID where the service is instantiated")
+stream_auth.set_defaults(func=monitor.SP_command, command='stream_auth')
+
+
+
+###
+# Initialize the Monitoring framework in the SDK
+###
+init = subparsers.add_parser('init',formatter_class=argparse.RawTextHelpFormatter,
+                             description='start(default)/stop the monitoring framework')
+init.add_argument(
     "action",
     choices=['start', 'stop'],
     default='start',
     nargs='?',
-    help="""Action for interface, flow_mon, flow_entry, flow_total:
-          start: install the flowentry and/or export the metric
-          stop: delete the flowentry and/or stop exporting the metric
-          Action for init:
-          start: start the monitoring framework (cAdvisor, Prometheus DB + Pushgateway)
-          stop: stop the monitoring framework
-          Action for msd/stream:
-          start: start exporting the monitoring metrics from the msd/SP
-          stop: stop exporting the monitoring metrics from the msd/SP
-          """)
+    help="""start: start the monitoring framework (cAdvisor, Prometheus DB + Pushgateway)
+stop: stop the monitoring framework
+""")
+init.set_defaults(func=monitor.init, command='init')
 
-# vnf names to start an xterm for
-parser.add_argument(
+
+###
+# Install and export monitor metrics from the Emulator or the SP
+###
+msd = subparsers.add_parser('msd',formatter_class=argparse.RawTextHelpFormatter,
+                             description='start(default)/stop monitoring metrics from the msd (monitoring descriptor file)')
+msd.add_argument(
+    "action",
+    choices=['start', 'stop'],
+    default='start',
+    nargs='?',
+    help="""start/stop monitoring metrics from the msd (monitoring descriptor file)""")
+msd.add_argument(
+    "--file", "-f", dest="file",
+    required = True,
+    help="Monitoring Service Descriptor file (MSD) describing the monitoring rules")
+msd.set_defaults(func=monitor.EMU_command, command='msd')
+
+
+###
+# Export the monitored counters from a VNF interface in the Emulator (recommendation is to do this via the MSD file)
+###
+interface = subparsers.add_parser('interface',formatter_class=argparse.RawTextHelpFormatter,
+                             description='export an interface metric (tx/rx bytes/packets) from a VNF deployed in the emulator (The recommended way is to group all metrics into an MSD file)')
+interface.add_argument(
+    "action",
+    choices=['start', 'stop'],
+    default='start',
+    nargs='?',
+    help="""start: export the metric
+            stop: stop exporting the metric""")
+interface.add_argument(
+    "--vnf_name", "-vnf", dest="vnf_name",
+    help="vnf name:interface to be monitored")
+interface.add_argument(
+    "--metric", "-me", dest="metric",
+    help="VNF metric to monitor in the emulator")
+interface.set_defaults(func=monitor.EMU_command, command='monitor_interface')
+
+
+###
+# Export the monitored counters from an existing flow in the Emulator (recommendation is to do this via the MSD file)
+###
+flow_mon = subparsers.add_parser('flow_mon',formatter_class=argparse.RawTextHelpFormatter,
+                              description='export a metric (tx/rx bytes/packets) of an existing flow in the emulator network (The recommended way is to group all metrics into an MSD file)')
+flow_mon.add_argument(
+    "action",
+    choices=['start', 'stop'],
+    default='start',
+    nargs='?',
+    help="""start: export the metric
+stop: stop exporting the metric""")
+flow_mon.add_argument(
+    "--vnf_name", "-vnf", dest="vnf_name",
+    help="vnf name:interface to be monitored")
+flow_mon.add_argument(
+    "--metric", "-me", dest="metric",
+    help="VNF metric to monitor in the emulator")
+flow_mon.add_argument(
+    "--cookie", "-c", dest="cookie",
+    help="integer value to identify this flow monitor rule")
+flow_mon.set_defaults(func=monitor.EMU_command, command='flow_mon')
+
+
+###
+# Add a flow and export its monitored counters in the Emulator (recommendation is to do this via the MSD file)
+###
+flow = subparsers.add_parser('flow',formatter_class=argparse.RawTextHelpFormatter,
+                             description='set and export a flow entry in the emulator network (The recommended way is to group all metrics into an MSD file)')
+flow.add_argument(
+    "action",
+    choices=['start', 'stop'],
+    default='start',
+    nargs='?',
+    help="""start: install the flowentry and/or export the metric
+stop: delete the flowentry and/or stop exporting the metric""")
+flow.add_argument(
+    "--source", "-src", dest="source",
+    help="vnf name:interface of the source of the chain")
+flow.add_argument(
+    "--destination", "-dst", dest="destination",
+    help="vnf name:interface of the destination of the chain")
+flow.add_argument(
+    "--weight", "-w", dest="weight",
+    help="weight edge attribute to calculate the path")
+flow.add_argument(
+    "--match", "-ma", dest="match",
+    help="string to specify how to match the monitored flow")
+flow.add_argument(
+    "--priority", "-p", dest="priority",
+    help="priority of the flow match entry, installed to get counter metrics for the monitored flow.")
+flow.add_argument(
+    "--bidirectional", "-b", dest="bidirectional",
+    action='store_false',
+    help="add/remove the flow entries from src to dst and back")
+flow.add_argument(
+    "--cookie", "-c", dest="cookie",
+    help="integer value to identify this flow monitor rule")
+flow.add_argument(
+    "--metric", "-me", dest="metric",
+    help="VNF metric to monitor in the emulator")
+flow.set_defaults(func=monitor.EMU_command, command='flow_total')
+
+
+
+###
+# Dump the packets for a specific interface
+###
+dump = subparsers.add_parser('dump',formatter_class=argparse.RawTextHelpFormatter,
+                             description='start tcpdump for specified interface (optionally save as .pcap)')
+dump.add_argument(
+    "action",
+    choices=['start', 'stop'],
+    default='start',
+    nargs='?',
+    help="""start/stop dumping the packets""")
+dump.add_argument(
+    "--vnf_name", "-vnf", dest="vnf_name",
+    help="vnf name:interface to be monitored")
+dump.add_argument(
+    "--file", "-f", dest="file",
+    required = True,
+    help="Export the dumped traffic to a .pcap file")
+dump.set_defaults(func=monitor.EMU_command, command='dump')
+
+###
+# Open an xterm terminal for specific VNFs
+###
+xterm = subparsers.add_parser('xterm',formatter_class=argparse.RawTextHelpFormatter,
+                             description='start an x-terminal for specific VNF(s)')
+xterm.add_argument(
     "--vnf_names", "-n", dest="vnf_names",
     default="",
     nargs='*',
     help="vnf names to open an xterm for")
+xterm.set_defaults(func=monitor.EMU_command, command='xterm')
 
-## select the vim to execute the monitoring action on (default=emulator)
-parser.add_argument(
-    "--vim", dest="vim",
+###
+# Query metric values from the Prometheus database in the SDK or the SONATA Service Platform
+###
+query = subparsers.add_parser('query',formatter_class=argparse.RawTextHelpFormatter,
+                             description='query monitored metrics from the Prometheus DB in the SDK or the Service Platform')
+query.add_argument(
+    "--query", "-q", dest="query",
+    help="prometheus query")
+query.add_argument(
+    "--vim", "-vim", dest="vim",
     default="emu",
-    help="VIM where the command should be executed (emu/sp)")
-
-## arguments to specify a vnf
-parser.add_argument(
-    "--vnf_name", "-vnf", dest="vnf_name",
-    help="vnf name:interface to be monitored")
-parser.add_argument(
+    help="Emulator or Service Platform ID where the service is instantiated")
+query.add_argument(
     "--datacenter", "-d", dest="datacenter",
     default=None,
     help="Data center where the vnf is deployed")
-
-## arguments to deploy a vnf
-parser.add_argument(
-    "--image","-i", dest="image",
-    help="Name of container image to be used e.g. 'ubuntu:trusty'")
-parser.add_argument(
-    "--dcmd", "-cmd", dest="docker_command",
-    help="Startup command of the container e.g. './start.sh'")
-parser.add_argument(
-    "--net", dest="network",
-    help="Network properties of a compute instance e.g. \
-          '(id=input,ip=10.0.10.3/24),(id=output,ip=10.0.10.4/24)' for multiple interfaces.")
-
-## arguments to query prometheus
-parser.add_argument(
-    "--query", "-q", dest="query",
-    help="prometheus query")
-
-## arguments specific for vnf profiling
-parser.add_argument(
-    "--input", "-in", dest="input",
-    help="input interface of the vnf to profile")
-parser.add_argument(
-    "--output", "-out", dest="output",
-    help="output interface of the vnf to profile")
-
-## arguments specific for metric/flow installing
-parser.add_argument(
-    "--source", "-src", dest="source",
-    help="vnf name:interface of the source of the chain")
-parser.add_argument(
-    "--destination", "-dst", dest="destination",
-    help="vnf name:interface of the destination of the chain")
-parser.add_argument(
-    "--weight", "-w", dest="weight",
-    help="weight edge attribute to calculate the path")
-parser.add_argument(
-    "--match", "-ma", dest="match",
-    help="string to specify how to match the monitored flow")
-parser.add_argument(
-    "--priority", "-p", dest="priority",
-    help="priority of the flow match entry, installed to get counter metrics for the monitored flow.")
-parser.add_argument(
-    "--bidirectional", "-b", dest="bidirectional",
-    action='store_false',
-    help="add/remove the flow entries from src to dst and back")
-
-## arguments specific for metric/flow monitoring
-parser.add_argument(
-    "--metric", "-me", dest="metric",
-    help="SDK or SP metric")
-parser.add_argument(
-    "--cookie", "-c", dest="cookie",
-    help="integer value to identify this flow monitor rule")
-parser.add_argument(
-    "--file", "-f", dest="file",
-    help="service descriptor file describing monitoring rules or pcap dump file")
+query.add_argument(
+    "--vnf_name", "-vnf", dest="vnf_name",
+    help="vnf name:interface to be monitored")
+query.set_defaults(func=monitor.EMU_command, command='query')
 
 
-monitor = sonmonitor()
 
 # map the command and vim selections to the correct function
 def _execute_command(args):
     # commands only implemented for the SP:
-    sp_cmds = ['list', 'stream']
+    sp_cmds = ['list', 'stream', 'stream_auth']
     # commands inside this class:
     sonmonitor_cmds = {'init':monitor.init}
 
-    if args["command"][0] in sonmonitor_cmds:
-        cmd = args["command"][0]
-        ret = sonmonitor_cmds[cmd](**args)
-        logging.debug("cmd: {0} \nreturn: {1}".format(args["command"][0], ret))
+    command = args["command"]
 
-    elif args["command"][0] in sp_cmds:
-        args['vim'] = 'sp'
-        VIM_class = eval(args.get('vim'))
-        # call the VIM class method with the same name as the command arg
-        args['monitor'] = monitor
-        ret = getattr(VIM_class, args["command"][0])(**args)
-        logging.debug("cmd: {0} \nreturn: {1}".format(args["command"][0], ret))
-        pp.pprint(ret)
+    if command in sonmonitor_cmds:
+        ret = sonmonitor_cmds[command](**args)
+        logging.debug("cmd: {0} \nreturn: {1}".format(command, ret))
+
+    # elif command in sp_cmds:
+    #     SP_command(command, args)
 
     elif args["command"] is not None:
         VIM_class = eval(args.get('vim'))
         # call the VIM class method with the same name as the command arg
         args['monitor'] = monitor
-        ret = getattr(VIM_class, args["command"][0])(**args)
-        logging.debug("cmd: {0} \nreturn: {1}".format(args["command"][0], ret))
+        ret = getattr(VIM_class, command)(**args)
+        logging.debug("cmd: {0} \nreturn: {1}".format(command, ret))
         pp.pprint(ret)
 
     else:
-        logging.error("Command not implemented: {0}".format(args.get("command")))
+        logging.error("Command not implemented: {0}".format(command))
+
+
 
 def main():
+
+    args = parser.parse_args()
+    args.func(args)
+
+    return
+
     args = vars(parser.parse_args())
 
     if args is None:

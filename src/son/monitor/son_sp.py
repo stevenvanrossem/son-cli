@@ -22,13 +22,15 @@ partner consortium (www.sonata-nfv.eu).
 """
 
 import logging
-from requests import Session, post
+from requests import Session, post, get
 import websocket
 import threading
-from subprocess import call
+from subprocess import call, check_output
 import json
 from son.profile.helper import read_yaml, write_yaml
 from prometheus_client import start_http_server, Gauge
+import jwt
+import os
 
 """
 This class implements the son-sp commands.
@@ -41,19 +43,28 @@ LOG.setLevel(level=logging.INFO)
 prometheus_stream_port = 8082
 prometheus_server_api = 'http://127.0.0.1:9090'
 prometheus_config_path = '/tmp/son-monitor/prometheus/prometheus_sdk.yml'
+GK_api = 'http://sp.int3.sonata-nfv.eu:32001/api/v2/'
+monitor_api = 'http://sp.int3.sonata-nfv.eu:8000/api/v1/'
+son_access_config_path = "/home/steven/.son-workspace"
+platform_id = 'sp1'
 
 class Service_Platform():
-    def __init__(self, monitor_api=None, export_port=8082, **kwargs):
-        self.monitor_api = monitor_api
+    def __init__(self, export_port=8082, GK_api=None, **kwargs):
+
+        self.monitor_api = kwargs.get('monitor_api', monitor_api)
+        self.GK_api = kwargs.get('GK_api', GK_api)
+        self.son_access_config_path = kwargs.get('son_access_config_path', son_access_config_path)
+        self.platform_id = kwargs.get('platform_id', platform_id)
+
         # Build up our session
         self.session = Session()
         self.session.headers = {
             "Accept": "application/json; charset=UTF-8"
         }
 
+        # global parameters needed for the SP_websocket Class
         global prometheus_stream_port
         prometheus_stream_port = export_port
-
         global prometheus_server_api
         prometheus_server_api = kwargs.get('prometheus_server_api', prometheus_server_api)
         global prometheus_config_path
@@ -62,6 +73,8 @@ class Service_Platform():
         self.ws_thread = None
         # websocket in the SP
         self.ws = None
+        # access token to auth the SDK user
+        self.access_token = None
 
 
     def list(self, **kwargs):
@@ -105,7 +118,161 @@ class Service_Platform():
             self.ws_thread.join()
             return 'websocket thread started'
 
+    def stream_auth(self, **kwargs):
+        LOG.setLevel(level=logging.DEBUG)
+        # periodically refresh token
+        self._get_token()
 
+        #ret = self._get_function_uuid()
+        service_name = kwargs.get("service","sonata-demo-12")
+        vnf_name = kwargs.get("vnf_name","vtc-vnf2")
+        metric = kwargs.get("metric")
+
+        service_desc_uuid = self._get_service_descriptor_uuid(service_name)
+        #self._get_service_instance_list()
+
+        vnf_instances = self._get_vnf_instances(service_desc_uuid)
+        if len(vnf_instances) <= 0:
+            LOG.warning("found no VNF instances for this service descriptor uuid: {0}".format(service_desc_uuid))
+        else:
+            vnf_descriptor_uuid = self._get_VNF_descriptor_uuid(vnf_name)
+
+            for vnf_instance_uuid in vnf_instances:
+                if self._check_VNF_instance_uuid(vnf_instance_uuid, vnf_descriptor_uuid):
+                    LOG.info("found VNF: {0} with instance uuid: {2} in service: {1} ".format(vnf_name, service_name, vnf_instance_uuid))
+                    self._get_ws_url(vnf_descriptor_uuid, vnf_instance_uuid, metric)
+                    break
+
+
+        ret = ''
+        #uuid = ''
+        #ret = self._get_service_instance_uuid(self, uuid)
+
+
+
+        return ret
+
+
+    # TODO: start background thread to refresh token
+    def _get_token(self):
+        # the credentials and token is fetched via son-access, the son-access config path must be given
+        token_path = os.path.join(self.son_access_config_path, 'platforms', 'token.txt')
+        output = check_output(['son-access', '-w', self.son_access_config_path, '-p', self.platform_id, 'auth'])
+
+        #token_path = workspace_dir + '/' + token_file
+        with open(token_path, 'r') as token:
+            self.access_token = token.read()
+
+    def _get_VNF_descriptor_uuid(self, vnf_name):
+        headers = {'Authorization': "Bearer %s" % self.access_token}
+        url = self.GK_api + "functions"
+        resp = get(url, headers=headers)
+        if resp.status_code >= 400:
+            return 'error: {}'.format(resp.status_code)
+        functions_list = resp.json()
+        found_functions = [function.get("uuid") for function in functions_list if function["vnfd"]["name"] == vnf_name]
+        if len(found_functions) > 1 or len(found_functions) == 0:
+            LOG.warning("found {0} functions with name: {1}".format(len(found_functions), vnf_name))
+            return None
+        else:
+            uuid = found_functions[0]
+            LOG.info("found function descriptor of {0} with uuid: {1}".format(vnf_name, uuid))
+            return uuid
+
+    def _check_VNF_instance_uuid(self, vnf_instance_uuid, vnf_descriptor_uuid):
+        headers = {'Authorization': "Bearer %s" % self.access_token}
+        url = self.GK_api + "records/functions"
+        resp = get(url, headers=headers)
+        if resp.status_code >= 400:
+            return 'error: {}'.format(resp.status_code)
+        LOG.debug('request VNF instance uuid, url:{0} json:{1}'.format(url, json.dumps(resp.json(), indent=2)))
+        vnf_list = resp.json()
+        vnf_list = [vnf for vnf in vnf_list if vnf.get("descriptor_reference") == vnf_descriptor_uuid and vnf.get("uuid") == vnf_instance_uuid]
+        if len(vnf_list) == 1 :
+            LOG.info("found VNF instance with matching uuid: {0}".format(vnf_instance_uuid))
+            return True
+        else:
+            LOG.info("found no VNF instance with matching uuid: {0}".format(vnf_instance_uuid))
+            return False
+
+    # Get the list of all the service instances registered
+    def _get_service_instance_list(self):
+        headers = {'Authorization': "Bearer %s" % self.access_token}
+        url = self.GK_api + "records/services"
+        resp = get(url, headers=headers)
+        LOG.info('request service instance uuid list, url:{0} json:{1}'.format(url, json.dumps(resp.json(), indent=2)))
+        return resp.text
+
+    # Gets a registered service instance
+    def _get_vnf_instances(self, service_descriptor_uuid):
+        headers = {'Authorization': "Bearer %s" % self.access_token}
+        url = self.GK_api + "records/services"
+        resp = get(url, headers=headers)
+        if resp.status_code >= 400:
+            return 'error: {}'.format(resp.status_code)
+        LOG.debug('request service instances, url:{0} json:{1}'.format(url, json.dumps(resp.json(), indent=2)))
+        services_list = resp.json()
+        found_services = [service for service in services_list if service["descriptor_reference"] == service_descriptor_uuid]
+        if len(found_services) > 1 or len(found_services) == 0 :
+            LOG.warning("found {0} service instances with descriptor uuid: {1}". format(len(found_services), service_descriptor_uuid))
+            return []
+        else:
+            service = found_services[0]
+            service_instance_uuid = service["uuid"]
+            vnfr_list = [vnf.get("vnfr_id") for vnf in service["network_functions"]]
+            LOG.info("found VNF descriptors: {}".format(json.dumps(vnfr_list,indent=2)))
+            return vnfr_list
+
+    # Obtain the list of services that can be instantiated
+    def _get_service_descriptor_uuid(self, service_name):
+        headers = {'Authorization': "Bearer %s" % self.access_token}
+        url = self.GK_api + "services"
+        resp = get(url, headers=headers)
+        if resp.status_code >= 400:
+            return 'error: {}'.format(resp.status_code)
+        LOG.debug('request service descriptor uuid, url:{0} json:{1}'.format(url, json.dumps(resp.json(), indent=2)))
+        services_list = resp.json()
+        found_services = [service.get("uuid") for service  in services_list if service["nsd"]["name"] == service_name]
+        if len(found_services) > 1 or len(found_services) == 0 :
+            LOG.warning("found {0} services with name: {1}". format(len(found_services), service_name))
+            return None
+        else:
+            uuid = found_services[0]
+            LOG.info("found service descriptor of service: {0} with uuid: {1}".format(service_name, uuid))
+            return uuid
+
+    def _get_ws_url(self, function_uuid, instance_uuid, metric):
+        headers = {'Authorization': "Bearer %s" % self.access_token}
+        url = self.GK_api + "functions/" + function_uuid + "/instances/" + instance_uuid + "/synch-mon-data?metrics=" + \
+              metric + "&for=10"
+        response = get(url, headers=headers)
+        code = response.status_code
+        LOG.info("websocket request response: {}".format(response.text))
+        LOG.info("websocket request response: {}".format(response.json()))
+        if code == 200:
+            ws_url = response.json().get('ws_url')
+            LOG.info('ws_url: {}'.format(ws_url))
+
+    # periodically check the status of the token or renew it in time (token can timeout after 300s)
+    def check_token_status(access_token, platform_public_key):
+        try:
+            decoded = jwt.decode(access_token, platform_public_key,
+                                 True, algorithms='RS256', audience='adapter')
+            try:
+                username = decoded['preferred_username']
+                return True
+            except:
+                return True
+        except jwt.DecodeError:
+            LOG.error('Token cannot be decoded because it failed validation')
+            return False
+        except jwt.ExpiredSignatureError:
+            LOG.error('Signature has expired')
+            return False
+        except jwt.InvalidIssuerError:
+            return False
+        except jwt.InvalidIssuedAtError:
+            return False
 
 class SP_websocket(websocket.WebSocketApp):
     def __init__(self, url, vnf_name=None, metric=None,
