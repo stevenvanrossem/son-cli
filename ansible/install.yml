@@ -60,3 +60,6 @@
 
     - name: install prometheus client (son-monitor dependency)
       pip: name=prometheus_client version=latest executable=pip3
+
+     - name: install PyJWT (son-access dependency)
+      pip: name=PyJWT version=latest executable=pip3
