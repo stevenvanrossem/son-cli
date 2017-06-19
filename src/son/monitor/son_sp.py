@@ -435,7 +435,7 @@ class SP_websocket(websocket.WebSocketApp):
         self.print = print
 
         self.metric_received = False
-        self.prometheus_metric_list = []
+        self.prometheus_metric = None
 
         websocket.WebSocketApp.__init__(self, url,
                                         on_message=self._on_message,
@@ -454,12 +454,9 @@ class SP_websocket(websocket.WebSocketApp):
         if not self.metric_received:
             self.set_exported_metric(metric_list)
 
-        # only export the selected metric and vnf_name
         if self.metric_received:
-            i = 0
-            for metric in self.metric_list:
-                self.prometheus_metric_list[i].labels(**metric['labels']).set(metric["value"])
-                i += 1
+            for metric in metric_list:
+                self.prometheus_metric.labels(**metric['labels']).set(metric["value"])
 
         # some info  printing
         if self.metric_received and self.print \
@@ -514,10 +511,10 @@ class SP_websocket(websocket.WebSocketApp):
             # metric is found and labels are set
             metric_name = self.metric
             labels = list(metric['labels'])
-            prometheus_metric = Gauge(metric_name, self.desc, labels)
-            self.prometheus_metric_list.append(prometheus_metric)
+            self.prometheus_metric = Gauge(metric_name, self.desc, labels)
             self.metric_received = True
             LOG.info('exporting metric with labels: {}'.format(labels))
+            break
 
     def filter_output(self, message):
         data = json.loads(message)
@@ -535,20 +532,19 @@ class SP_websocket(websocket.WebSocketApp):
     def find_metric(self, message):
         data = json.loads(message)
         metric_list = data.get(self.metric, [])
-        labels = {}
         metric_list_out = []
-        value = None
-        metric_found = False
+
         for metric in metric_list:
+            metric_found = False
+            labels = {}
+            LOG.debug('metric found:{}'.format(metric))
             for label in metric.get('labels', []):
                 key, value = label.split('=')
                 labels[key] = str(value).replace('"','')
-                if self.vc_id in label:
+                if self.vc_id in value:
                     metric_found = True
 
-            if not metric_found:
-                labels = {}
-            else:
+            if metric_found:
                 # metric is found and labels are set
                 value = metric.get('value')
                 metric = {'labels': labels, "value": value}
