@@ -49,7 +49,7 @@ from son.monitor.son_emu import Emu
 from son.monitor.son_sp import Service_Platform
 
 import pprint
-pp = pprint.PrettyPrinter(indent=4)
+pp = pprint.PrettyPrinter(indent=2)
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -118,6 +118,15 @@ class sonmonitor():
         #startup SONATA SDK environment (cAdvisor, Prometheus, PushGateway, son-emu(experimental))
         actions = {'start': self.start_containers, 'stop': self.stop_containers}
         return actions[action]()
+
+    def query(self, args):
+        #LOG.info("son-monitor query command")
+        sp = args.sp
+        # choose the correct query function depending on the chosen vim (emu or SP)
+        if sp == 'emu':
+            return self.EMU_command(args)
+        else:
+            return self.SP_command(args)
 
     # start the sdk monitoring framework (cAdvisor, Prometheus, Pushgateway, ...)
     def start_containers(self):
@@ -209,6 +218,7 @@ class sonmonitor():
     # start a monitoring action on the Service Platform
     def SP_command(self, args):
         command = args.command
+
         SP_class = Service_Platform(export_port=PROMETHEUS_STREAM_PORT, GK_api=GK_API,
                                     monitor_api=SP_MONITOR_API,
                                     prometheus_config_path=prometheus_config_path,
@@ -221,6 +231,7 @@ class sonmonitor():
         ret = getattr(SP_class, command)(**args)
         logging.debug("cmd: {0} \nreturn: {1}".format(command, ret))
         pp.pprint(ret)
+        return 'end of SP command: {}'.format(command)
 
 
     # start a monitoring action on the Emulator
@@ -233,6 +244,7 @@ class sonmonitor():
         ret = getattr(EMU_class, command)(**args)
         logging.debug("cmd: {0} \nreturn: {1}".format(command, ret))
         pp.pprint(ret)
+        return 'end of EMU command: {}'.format(command)
 
 
 
@@ -246,10 +258,13 @@ examples = """General usage:
     son-monitor msd -f msd_example.yml
     son-monitor init stop
     son-monitor xterm -n vnf1 vnf2
+    son-monitor dump -vnf vnf1:port0
 
-Specialized usage:
-    son-monitor flow_total start -src vnf1  -dst vnf2  -ma "dl_type=0x0800,nw_proto=17,udp_dst=5001"  -b -c 11 -me tx_bytes
-    son-monitor query --vim emu -d datacenter1 -vnf vnf1 -q 'sum(rate(container_cpu_usage_seconds_total{id="/docker/<uuid>"}[10s]))'
+Gathering metrics:
+    son-monitor stream -sp sp2 -s demo_service -vnf vnf1 -me metric_name
+    son-monitor query -vnf vnf1:port1 -me tx_packet_rate
+    son-monitor query --sp emu -d datacenter1 -vnf vnf1 -q 'sum(rate(container_cpu_usage_seconds_total{id="/docker/<uuid>"}[10s]))'
+    son-monitor query -sp sp2 -s sonata-service -vnf vnf1 -me vm_cpu_perc
     """
 
 parser = argparse.ArgumentParser(description=description,
@@ -314,17 +329,23 @@ stream_auth.add_argument(
     choices=['start', 'stop'],
     default='start',
     nargs='?',
-    help="""start/stop streaming metrics""")
+    help="""start/stop streaming metrics from the SONATA Service Platform""")
 stream_auth.add_argument(
     "--metric", "-me", dest="metric",
     help="SP metric")
 stream_auth.add_argument(
-    "--vnf_id", "-vnf", dest="vnf_name",
-    help="vnf_id to be monitored")
-stream_auth.add_argument(
     "--service", "-s", dest="service",
     default=None,
-    help="Service name that includes the VNT to be monitored")
+    help="Service name that includes the VNF to be monitored")
+stream_auth.add_argument(
+    "--vnf_name", "-vnf", dest="vnf_name",
+    help="vnf to be monitored")
+stream_auth.add_argument(
+    "--vdu", "-vdu", dest="vdu_id",
+    help="vdu_id to be monitored (optional, picks the first vdu if not given)")
+stream_auth.add_argument(
+    "--vnfc", "-vnfc", dest="vnfc_id",
+    help="vnfc_id to be monitored (optional, picks the first vnfc instance if not given)")
 stream_auth.add_argument(
     "--sp", "-sp", dest="sp",
     default="sp1",
@@ -336,29 +357,42 @@ stream_auth.set_defaults(func=monitor.SP_command, command='stream_auth')
 # Query metric values from the Prometheus database in the SDK or the SONATA Service Platform
 ###
 query = subparsers.add_parser('query',formatter_class=argparse.RawTextHelpFormatter,
-                             description='query monitored metrics from the Prometheus DB in the SDK or the Service Platform')
+                             description="""Query monitored metrics from the Prometheus DB in the SDK or the Service Platform.
+(For querying the Service Platform, Authentication must be configured first via son-access)""")
 query.add_argument(
-    "--vim", "-vim", dest="vim",
+    "--sp", "-sp", dest="sp",
     default="emu",
     help="Emulator or Service Platform ID where the service is instantiated (default = emulator)")
 query.add_argument(
-    "--datacenter", "-d", dest="datacenter",
-    default=None,
-    help="Data center where the vnf is deployed (if not given, the datacenter will be looked up first)")
-query.add_argument(
-    "--vnf_id", "-vnf", dest="vnf_name",
-    help="vnf name:interface to be monitored")
-query.add_argument(
     "--service", "-s", dest="service",
     default=None,
-    help="Service name that includes the VNT to be monitored")
+    help="Service in the Service Platform that includes the VNF to be monitored")
+query.add_argument(
+    "--vnf_name", "-vnf", dest="vnf_name",
+    help="vnf to be monitored")
+query.add_argument(
+    "--vdu", "-vdu", dest="vdu_id",
+    help="vdu_id to be monitored in the Service Platform (optional, picks the first vdu if not given)")
+query.add_argument(
+    "--vnfc", "-vnfc", dest="vnfc_id",
+    help="vnfc_id to be monitored in the Service Platform (optional, picks the first vnfc instance if not given)")
 query.add_argument(
     "--metric", "-me", dest="metric",
     help="The metric in the SDK or SP to query")
 query.add_argument(
+    "--since", "-si", dest="start",
+    help="Retrieve the metric values since this start time (eg. 2017-05-05T17:10:22Z)")
+query.add_argument(
+    "--until", "-u", dest="stop",
+    help="Retrieve the metric values until this stop time (eg. 2017-05-05T17:31:11Z)")
+query.add_argument(
     "--query", "-q", dest="query",
-    help="raw prometheus query")
-query.set_defaults(func=monitor.EMU_command, command='query')
+    help="raw Prometheus query for the emulator")
+query.add_argument(
+    "--datacenter", "-d", dest="datacenter",
+    default=None,
+    help="Data center where the vnf is deployed in the emulator (if not given, the datacenter will be looked up first)")
+query.set_defaults(func=monitor.query, command='query')
 
 ###
 # Dump the packets for a specific interface
