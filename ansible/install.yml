@@ -59,7 +59,7 @@
       pip: name=docker version=2.0.2 executable=pip3
 
     - name: install prometheus client (son-monitor dependency)
-      pip: name=prometheus_client version=latest executable=pip3
+      pip: name=prometheus_client state=latest executable=pip3
 
     - name: install PyJWT (son-access dependency)
-      pip: name=PyJWT version=latest executable=pip3
+      pip: name=PyJWT state=latest executable=pip3
