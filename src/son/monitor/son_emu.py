@@ -217,6 +217,8 @@ class Emu():
             sleep(1)
 
     def exec(self, cmd, vnf_name, action='start'):
+        if not cmd:
+            return
         if vnf_name == 'host':
             self.host_exec(cmd, action)
         else:
@@ -330,11 +332,13 @@ class Emu():
 
         vnf_name2 = parse_vnf_name(vnf_name)
         vnf_interface = parse_vnf_interface(vnf_name)
-        metric = kwargs.get("metric")
+        metric = kwargs.get("metric",'')
         query = kwargs.get("query")
         datacenter = kwargs.get("datacenter")
 
         # Classify this type of metric
+        if not metric:
+            metric = ''
         metric_test = metric
         if metric[0:3] == 'tx_' or metric[0:3] == 'rx_':
             metric_test = metric[3:]
