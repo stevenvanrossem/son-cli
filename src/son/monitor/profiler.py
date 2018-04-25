@@ -53,6 +53,7 @@ import operator
 from collections import defaultdict, OrderedDict
 import matplotlib.pyplot as plt
 import multiprocessing
+from copy import deepcopy
 
 LOG = logging.getLogger('Profiler')
 LOG.setLevel(level=logging.INFO)
@@ -165,7 +166,7 @@ class Emu_Profiler():
 
         # start overload detection
         #if len(self.overload_vnf_list) > 0 :
-        self.overload_monitor.start(self.emu)
+        #self.overload_monitor.start(self.emu)
 
         # start the profling loop
         self.profiling_thread.start()
@@ -241,10 +242,11 @@ class Emu_Profiler():
             for metric in self.input_metrics + self.output_metrics:
                 metric.reset()
 
-            LOG.info("vnf commands: {0}".format(cmd_dict))
+            LOG.info("All vnf commands: {0}".format(cmd_dict))
             # start the load
             for vnf_name in vnforder_list:
                 cmd = cmd_dict.get(vnf_name)
+                LOG.info("vnf command: {0}: {1}".format(vnf_name, cmd))
                 self.emu.exec(vnf_name=vnf_name, cmd=cmd)
 
             # let the load stabilize
@@ -256,6 +258,8 @@ class Emu_Profiler():
             start_time = time.time()
             LOG.info('waiting {} seconds while gathering metrics...'.format(self.timeout))
 
+            input_metrics = []
+            output_metrics = []
             while((time.time()-start_time) < self.timeout):
                 # add the new metric values to the list
                 input_metrics = self.query_metrics(self.input_metrics)
@@ -272,16 +276,16 @@ class Emu_Profiler():
             # add the result of this profiling run to the results list
             profiling_result = dict(
                 resource_alloc=(self.resource_configuration),
-                input_metrics=(input_metrics),
-                output_metrics=(output_metrics),
+                input_metrics=input_metrics,
+                output_metrics=output_metrics,
                 name=self.experiment_name,
                 run=self.run_number,
                 total=len(self.configuration_space)
             )
-            result = self.filter_profile_results(profiling_result)
-            self.profiling_results.append(result)
+            #result = self.filter_profile_results(profiling_result)
+            #self.profiling_results.append(result)
             # update the plot
-            self.profile_calc.update_results(result)
+            self.profile_calc.update_results(deepcopy(profiling_result))
 
             self.run_number += 1
 
@@ -640,6 +644,7 @@ class ProfileCalculator():
 
     def update_results(self, result):
         self.results.append(result)
+        LOG.info("measurement results: {0}".format(self.results))
         self.resultQ.put(self.results)
 
     def update_graph(self, resultQ, enable_updating):
@@ -660,25 +665,32 @@ class ProfileCalculator():
                 y_metric_id = profile['output_metric']
 
                 x_metrics = self._find_metrics(x_metric_id, results)
-                x_values = [m['average'] for m in x_metrics]
-                x_err_high = [m['CI_high'] - m['average'] for m in x_metrics]
-                x_err_low = [abs(m['CI_low'] - m['average']) for m in x_metrics]
-                x_unit = x_metrics[0]['unit']
+                x_values = [m.average for m in x_metrics]
+                x_err_high = [m.CI[1] - m.average for m in x_metrics]
+                x_err_low = [abs(m.CI[0] - m.average) for m in x_metrics]
+                x_unit = x_metrics[0].unit
+                x_list = [m.list_values for m in x_metrics]
+                x_scatter = [value for sublist in x_list for value in sublist]
 
                 y_metrics = self._find_metrics(y_metric_id, results)
-                y_values = [m['average'] for m in y_metrics]
-                y_err_high = [m['CI_high'] - m['average'] for m in y_metrics]
-                y_err_low = [abs(m['CI_low'] - m['average']) for m in y_metrics]
-                y_unit = y_metrics[0]['unit']
+                y_values = [m.average for m in y_metrics]
+                y_err_high = [m.CI[1] - m.average for m in y_metrics]
+                y_err_low = [abs(m.CI[0] - m.average) for m in y_metrics]
+                y_unit = y_metrics[0].unit
+                y_list = [m.list_values for m in y_metrics]
+                y_scatter = [value for sublist in y_list for value in sublist]
 
                 plt.xlabel('{0}({1})'.format(x_metric_id, x_unit))
                 plt.ylabel('{0}({1})'.format(y_metric_id, y_unit))
 
                 plt.title(profile['name'])
 
+                #LOG.info("x: {0} y: {1}".format(x_values, y_values))
                 plt.grid(b=True, which='both', color='lightgrey', linestyle='--')
                 plt.errorbar(x_values, y_values, xerr=[x_err_low, x_err_high], yerr=[y_err_low, y_err_high], fmt='--o',
                              capsize=2)
+                plt.scatter(x_scatter, y_scatter)
+
 
                 i += 1
 
@@ -694,6 +706,9 @@ class ProfileCalculator():
         if show_final:
             self.display_graph()
 
+    """
+    display the graph from stored result file
+    """
     def display_graph(self, file=None):
         if file:
             self.results = read_yaml(file)
@@ -710,16 +725,23 @@ class ProfileCalculator():
             y_metric_id = profile['output_metric']
 
             x_metrics = self._find_metrics(x_metric_id, self.results)
-            x_values = [m['average'] for m in x_metrics]
-            x_err_high = [m['CI_high']-m['average'] for m in x_metrics]
-            x_err_low = [abs(m['CI_low']-m['average']) for m in x_metrics]
-            x_unit = x_metrics[0]['unit']
+            x_values = [m.average for m in x_metrics]
+            x_err_high = [m.CI[1] - m.average for m in x_metrics]
+            x_err_low = [abs(m.CI[0] - m.average) for m in x_metrics]
+            x_unit = x_metrics[0].unit
+            x_list = [m.list_values for m in x_metrics]
+            x_scatter = [value for sublist in x_list for value in sublist]
 
             y_metrics = self._find_metrics(y_metric_id, self.results)
-            y_values = [m['average'] for m in y_metrics]
-            y_err_high = [m['CI_high']-m['average'] for m in y_metrics]
-            y_err_low = [abs(m['CI_low']-m['average']) for m in y_metrics]
-            y_unit = y_metrics[0]['unit']
+            y_values = [m.average for m in y_metrics]
+            y_err_high = [m.CI[1] - m.average for m in y_metrics]
+            y_err_low = [abs(m.CI[0] - m.average) for m in y_metrics]
+            y_unit = y_metrics[0].unit
+            y_list = [m.list_values for m in y_metrics]
+            y_scatter = [value for sublist in y_list for value in sublist]
+
+            plt.xlabel('{0}({1})'.format(x_metric_id, x_unit))
+            plt.ylabel('{0}({1})'.format(y_metric_id, y_unit))
 
             plt.xlabel('{0}({1})'.format(x_metric_id,x_unit))
             plt.ylabel('{0}({1})'.format(y_metric_id, y_unit))
@@ -727,6 +749,7 @@ class ProfileCalculator():
 
             plt.grid(b=True, which='both', color='lightgrey', linestyle='--')
             plt.errorbar(x_values, y_values, xerr=[x_err_low, x_err_high], yerr=[y_err_low, y_err_high], fmt='--o', capsize=2)
+            plt.scatter(x_scatter, y_scatter)
 
             i += 1
         plt.tight_layout()
@@ -740,11 +763,16 @@ class ProfileCalculator():
         """
         metric_list = []
         for result in results:
+            for metric in result['input_metrics'] + result['output_metrics']:
+                if metric.metric_name == metric_id:
+                    metric_list.append(metric)
+        """
+        for result in results:
             for metric_dict in result['input_metrics']:
                 if metric_dict['name'] == metric_id:
                     metric_list.append(metric_dict)
             for metric_dict in result['output_metrics']:
                 if metric_dict['name'] == metric_id:
                     metric_list.append(metric_dict)
-
+        """
         return metric_list

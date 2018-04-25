@@ -219,7 +219,7 @@ class Emu():
     def exec(self, cmd, vnf_name, action='start'):
         if vnf_name == 'host':
             self.host_exec(cmd, action)
-        else:
+        elif cmd is not None and cmd != "":
             self.docker_exec(cmd, vnf_name, action)
 
 
@@ -480,10 +480,10 @@ class Emu():
     def update_vnf_resources(self, vnf_name, resource_dict):
 
         dc = self._find_dc(vnf_name)
-        #LOG.info('dc name: {0} vnf: {1}, res: {2}'.format(dc, vnf_name, resource_dict))
+        LOG.info('dc name: {0} vnf: {1}, res: {2}'.format(dc, vnf_name, resource_dict))
         response = self.session.put("{url}/restapi/compute/resources/{dc}/{name}".format(
                                     url=self.url,
-                                    dc=self._find_dc(vnf_name),
+                                    dc=dc,
                                     name=vnf_name),
                                    params=resource_dict)
         return response.text

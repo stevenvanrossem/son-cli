@@ -57,6 +57,7 @@ class Metric(object):
         self.query = None
         self.desc = None
         self.unit = None
+        self.list_values = []
 
         self.reset()
 
