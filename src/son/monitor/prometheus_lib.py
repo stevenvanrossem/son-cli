@@ -36,6 +36,7 @@ from son.profile.helper import read_yaml
 
 from scipy.stats import t
 import numpy as np
+from scipy import stats
 from math import isnan
 
 # set this to localhost for now
@@ -58,30 +59,38 @@ class Metric(object):
         self.desc = None
         self.unit = None
         self.list_values = []
+        self.CI = {'max': float('nan'), 'min': float('nan')}
 
         self.reset()
 
         # populate object from definition dict (eg. from YAML)
         self.__dict__.update(definition)
 
+
+    def doCalc(self):
+        self.median = float(np.nanmedian(self.list_values))
+        self.average = float(np.nanmean(self.list_values))
+        self.mode = float(stats.mode(self.list_values, nan_policy='omit')[0])
+        #self.average = self.sum / self.len
+
+        self.CI['min'] = float(np.nanpercentile(self.list_values, 5))
+        self.CI['max'] = float(np.nanpercentile(self.list_values, 95))
+
+        # mu = self.average
+        # sigma = np.nanstd(self.list_values).item()
+        # N = self.len
+        # if sigma > 0:
+        #     R = t.interval(0.95, N - 1, loc=mu, scale=sigma / np.sqrt(N))
+        #     self.CI['min'] = R[0].item()
+        #     self.CI['max'] = R[1].item()
+
+
     def addValue(self, value):
         self.last_value = value
 
         # update running average
-        if not isnan(value):
-            self.list_values.append(value)
-            self.sum += value
-            self.len += 1
-            self.average = self.sum/self.len
+        self.list_values.append(value)
 
-        # update CI
-        if self.len > 5 :
-            mu = self.average
-            sigma = np.std(self.list_values)
-            N = self.len
-            if sigma > 0:
-                R = t.interval(0.95, N - 1, loc=mu, scale=sigma / np.sqrt(N))
-                self.CI = R
 
     def reset(self):
         # reset the measured values
@@ -95,8 +104,11 @@ class Metric(object):
         self.len = 0
         # running average
         self.average = float('nan')
+        self.mode = float('nan')
+        self.median = float('nan')
+
         # confidence interval
-        self.CI = (float('nan'), float('nan'))
+        self.CI = {'max': float('nan'), 'min': float('nan')}
 
 
 # translate metric names to the prometheus query
@@ -120,7 +132,8 @@ nsdlink_metrics = ['packet_rate', 'byte_rate', 'packet_count', 'byte_count',
                    'packet_rate_cadv', 'byte_rate_cadv', 'packet_count_cadv', 'byte_count_cadv']
 network_metrics = ['packet_rate', 'byte_rate', 'packet_count', 'byte_count',
                    'packet_rate_cadv', 'byte_rate_cadv', 'packet_count_cadv', 'byte_count_cadv']
-testvnf_metrics = ['packet_loss', 'jitter', 'throughput']
+#testvnf_metrics = ['packet_loss', 'jitter', 'throughput']
+testvnf_metrics = []
 compute_metrics = ['cpu', 'mem', 'host_cpu']
 
 metric2flowquery = {}
@@ -138,6 +151,7 @@ for metric in prometheus_metrics['networkquery']:
 test2vnfquery = {}
 for metric in prometheus_metrics['testvnfquery']:
     test2vnfquery[metric['metric_name']] = MetricTemplate(**metric)
+    testvnf_metrics.append(metric['metric_name'])
 
 def query_Prometheus(query):
     url = prometheus_REST_api + '/' + 'api/v1/query?query=' + query
@@ -146,9 +160,10 @@ def query_Prometheus(query):
     ret = req.json()
     if ret['status'] == 'success':
         try:
-            ret = ret['data']['result'][0]['value']
+            result_array = ret['data'].get('result', [{'value': [0, float('NaN')]}])
+            ret = result_array[0]['value']
         except:
-            ret = ret
+            ret = [0, float('NaN')]
     else:
         ret = ret
     #logging.info('return:{0}'.format(ret))

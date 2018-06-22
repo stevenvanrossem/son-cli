@@ -91,6 +91,8 @@ class Emu_Profiler():
         self.results_file = defaults.get('results_file', RESULT_FILE)
         # graph only option
         self.graph_only = defaults.get('graph_only', False)
+        # display option
+        self.no_display = defaults.get('no_display', False)
 
         # generate profiling results
         self.profiling_results = list()
@@ -100,7 +102,7 @@ class Emu_Profiler():
         if self.graph_only:
             self.profile_calc.display_graph(file=self.results_file)
             return
-        else:
+        elif not self.no_display:
             self.profile_calc.start_plot()
             self.profile_calc.enable_updating.set()
 
@@ -151,8 +153,7 @@ class Emu_Profiler():
         # the number of the current profiling run
         self.run_number = 1
 
-        # display option
-        self.no_display = defaults.get('no_display', False)
+
 
 
     def start_experiment(self):
@@ -171,22 +172,25 @@ class Emu_Profiler():
         # start the profling loop
         self.profiling_thread.start()
 
-        if self.no_display == False:
-            # nicely print values
-            rows, columns = os.popen('stty size', 'r').read().split()
-            # Set the Terminal window size larger than its default
-            # to make sure the profiling results are fitting
-            if int(rows) < 40 or int(columns) < 130:
-                sys.stdout.write("\x1b[8;{rows};{cols}t".format(rows=40, cols=130))
-            # print something to reset terminal
-            print("")
-            n = os.system("clear")
-            # Add a delay to allow settings to settle...
-            time.sleep(1)
-            curses.wrapper(self.display_loop)
-        else:
-            # wait for profiling thread to end
-            self.profiling_thread.join()
+        # if self.no_display == False:
+        #     # nicely print values
+        #     rows, columns = os.popen('stty size', 'r').read().split()
+        #     # Set the Terminal window size larger than its default
+        #     # to make sure the profiling results are fitting
+        #     if int(rows) < 40 or int(columns) < 130:
+        #         sys.stdout.write("\x1b[8;{rows};{cols}t".format(rows=40, cols=130))
+        #     # print something to reset terminal
+        #     print("")
+        #     n = os.system("clear")
+        #     # Add a delay to allow settings to settle...
+        #     time.sleep(1)
+        #     curses.wrapper(self.display_loop)
+        # else:
+        #     # wait for profiling thread to end
+        #     self.profiling_thread.join()
+
+        # wait for profiling thread to end
+        self.profiling_thread.join()
 
         # stop overload detection
         self.overload_monitor.stop(self.emu)
@@ -195,7 +199,8 @@ class Emu_Profiler():
         self.write_results_to_file(self.results_file)
 
         #finalize the calculation of the performance profile
-        self.profile_calc.finalize_graph(show_final=self.no_display)
+        if not self.no_display:
+            self.profile_calc.finalize_graph()
 
 
     def profiling_loop(self):
@@ -249,8 +254,8 @@ class Emu_Profiler():
                 LOG.info("vnf command: {0}: {1}".format(vnf_name, cmd))
                 self.emu.exec(vnf_name=vnf_name, cmd=cmd)
 
-            # let the load stabilize
-            time.sleep(1)
+            # let the load stabilize and metrics get loaded in Prometheus
+            time.sleep(2)
             # reset the overload monitor
             self.overload_monitor.reset()
 
@@ -268,6 +273,10 @@ class Emu_Profiler():
                 if self.overload.is_set():
                     LOG.info('overload detected')
 
+            # all metrics gathered, do final calculations (average, CI)
+            for metric in input_metrics + output_metrics:
+                metric.doCalc()
+
             # stop the load
             LOG.info('end of experiment: {0} - run{1}/{2}'.format(self.experiment_name, self.run_number, len(self.configuration_space)))
             for vnf_name, cmd in cmd_dict.items():
@@ -276,16 +285,16 @@ class Emu_Profiler():
             # add the result of this profiling run to the results list
             profiling_result = dict(
                 resource_alloc=(self.resource_configuration),
-                input_metrics=input_metrics,
-                output_metrics=output_metrics,
+                metrics=input_metrics + output_metrics,
                 name=self.experiment_name,
                 run=self.run_number,
                 total=len(self.configuration_space)
             )
             #result = self.filter_profile_results(profiling_result)
-            #self.profiling_results.append(result)
+            self.profiling_results.append(deepcopy(profiling_result))
             # update the plot
-            self.profile_calc.update_results(deepcopy(profiling_result))
+            if not self.no_display:
+                self.profile_calc.update_results(deepcopy(profiling_result))
 
             self.run_number += 1
 
@@ -502,7 +511,7 @@ class Overload_Monitor():
         # query the number of available cores
         host_num_cpu_query = compute2vnfquery['num_cores'].query_template.format('')
         ret = query_Prometheus(host_num_cpu_query)
-        self.num_cores = int(ret[1])
+        self.num_cores = float(ret[1])
 
         # cpu skewness query
         self.skew_query_dict = {}
@@ -602,8 +611,6 @@ class Overload_Monitor():
             self.skew_value_dict[vnf_name].clear()
 
 
-
-
 class CursesHandler(logging.Handler):
 
     def __init__(self, screen):
@@ -665,17 +672,17 @@ class ProfileCalculator():
                 y_metric_id = profile['output_metric']
 
                 x_metrics = self._find_metrics(x_metric_id, results)
-                x_values = [m.average for m in x_metrics]
-                x_err_high = [m.CI[1] - m.average for m in x_metrics]
-                x_err_low = [abs(m.CI[0] - m.average) for m in x_metrics]
+                x_values = [m.median for m in x_metrics]
+                x_err_high = [m.CI['max'] - m.median for m in x_metrics]
+                x_err_low = [abs(m.CI['min'] - m.median) for m in x_metrics]
                 x_unit = x_metrics[0].unit
                 x_list = [m.list_values for m in x_metrics]
                 x_scatter = [value for sublist in x_list for value in sublist]
 
                 y_metrics = self._find_metrics(y_metric_id, results)
-                y_values = [m.average for m in y_metrics]
-                y_err_high = [m.CI[1] - m.average for m in y_metrics]
-                y_err_low = [abs(m.CI[0] - m.average) for m in y_metrics]
+                y_values = [m.median for m in y_metrics]
+                y_err_high = [m.CI['max'] - m.median for m in y_metrics]
+                y_err_low = [abs(m.CI['min'] - m.median) for m in y_metrics]
                 y_unit = y_metrics[0].unit
                 y_list = [m.list_values for m in y_metrics]
                 y_scatter = [value for sublist in y_list for value in sublist]
@@ -686,9 +693,13 @@ class ProfileCalculator():
                 plt.title(profile['name'])
 
                 #LOG.info("x: {0} y: {1}".format(x_values, y_values))
+
+                logging.info("plot: x={} - y={}".format(x_metric_id, y_metric_id))
+                logging.info("data: x={}".format(len(x_scatter)))
+                logging.info("data: y={}".format(len(y_scatter)))
                 plt.grid(b=True, which='both', color='lightgrey', linestyle='--')
                 plt.errorbar(x_values, y_values, xerr=[x_err_low, x_err_high], yerr=[y_err_low, y_err_high], fmt='--o',
-                             capsize=2)
+                             capsize=2, color='red')
                 plt.scatter(x_scatter, y_scatter)
 
 
@@ -698,13 +709,12 @@ class ProfileCalculator():
             plt.draw()
             plt.show(block=False)
 
-    def finalize_graph(self, show_final=False):
+    def finalize_graph(self):
         self.enable_updating.clear()
         self.plot_process.join(timeout=3)
         self.plot_process.terminate()
         # show plot window as blocking
-        if show_final:
-            self.display_graph()
+        self.display_graph()
 
     """
     display the graph from stored result file
@@ -725,17 +735,17 @@ class ProfileCalculator():
             y_metric_id = profile['output_metric']
 
             x_metrics = self._find_metrics(x_metric_id, self.results)
-            x_values = [m.average for m in x_metrics]
-            x_err_high = [m.CI[1] - m.average for m in x_metrics]
-            x_err_low = [abs(m.CI[0] - m.average) for m in x_metrics]
+            x_values = [m.median for m in x_metrics]
+            x_err_high = [m.CI['max'] - m.median for m in x_metrics]
+            x_err_low = [abs(m.CI['min'] - m.median) for m in x_metrics]
             x_unit = x_metrics[0].unit
             x_list = [m.list_values for m in x_metrics]
             x_scatter = [value for sublist in x_list for value in sublist]
 
             y_metrics = self._find_metrics(y_metric_id, self.results)
-            y_values = [m.average for m in y_metrics]
-            y_err_high = [m.CI[1] - m.average for m in y_metrics]
-            y_err_low = [abs(m.CI[0] - m.average) for m in y_metrics]
+            y_values = [m.median for m in y_metrics]
+            y_err_high = [m.CI['max'] - m.median for m in y_metrics]
+            y_err_low = [abs(m.CI['min'] - m.median) for m in y_metrics]
             y_unit = y_metrics[0].unit
             y_list = [m.list_values for m in y_metrics]
             y_scatter = [value for sublist in y_list for value in sublist]
@@ -747,8 +757,9 @@ class ProfileCalculator():
             plt.ylabel('{0}({1})'.format(y_metric_id, y_unit))
             plt.title(profile['name'])
 
+            logging.info("plot: x={} - y={}".format(x_metric_id, y_metric_id))
             plt.grid(b=True, which='both', color='lightgrey', linestyle='--')
-            plt.errorbar(x_values, y_values, xerr=[x_err_low, x_err_high], yerr=[y_err_low, y_err_high], fmt='--o', capsize=2)
+            plt.errorbar(x_values, y_values, xerr=[x_err_low, x_err_high], yerr=[y_err_low, y_err_high], fmt='--o', capsize=2, color='red')
             plt.scatter(x_scatter, y_scatter)
 
             i += 1
@@ -761,9 +772,10 @@ class ProfileCalculator():
         :param metric_id:
         :return:
         """
+
         metric_list = []
         for result in results:
-            for metric in result['input_metrics'] + result['output_metrics']:
+            for metric in result['metrics']:
                 if metric.metric_name == metric_id:
                     metric_list.append(metric)
         """

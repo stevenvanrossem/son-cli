@@ -171,7 +171,7 @@ class Emu():
             # remove whole process tree
             # send SIGTERM (not SIGKILL -9)
             cmd_new = cmd.replace('"', '')
-            cmd_new = "pkill -15 -f '" + cmd_new + "'"
+            cmd_new = "pkill -9 -f '" + cmd_new + "'"
             #cmd = "kill -TERM -- -$(pgrep -f '{cmd}')".format(cmd=cmd.replace('"',''))
             cmd_list = shlex.split(cmd_new)
             wait = True
@@ -198,7 +198,7 @@ class Emu():
             # remove whole process tree
             # send SIGTERM (not SIGKILL -9)
             cmd_new = cmd.replace('"', '')
-            cmd_new = "pkill -15 -f '" + cmd_new + "'"
+            cmd_new = "pkill -9 -f '" + cmd_new + "'"
             #cmd = "kill -TERM -- -$(pgrep -f '{cmd}')".format(cmd=cmd.replace('"',''))
             cmd_list = shlex.split(cmd_new)
             wait = True
