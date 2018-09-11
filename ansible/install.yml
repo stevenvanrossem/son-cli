@@ -38,19 +38,19 @@
     - name: install flask-cache 
       pip: name=flask-cache state=latest executable=pip3
 
-    - name: ensure docker repo key (son-monitor dependency)
-      shell: curl -fsSL https://get.docker.com/gpg | apt-key add -
+#    - name: ensure docker repo key (son-monitor dependency)
+#      shell: curl -fsSL https://get.docker.com/gpg | apt-key add -
 
-    - name: install docker (son-monitor dependency)
-      shell: curl -fsSL https://get.docker.com/ | sh
+#    - name: install docker (son-monitor dependency)
+#      shell: curl -fsSL https://get.docker.com/ | sh
 
-    - name: download docker-compose (son-monitor dependency)
-      shell: curl -L "https://github.com/docker/compose/releases/download/1.10.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+#    - name: download docker-compose (son-monitor dependency)
+#      shell: curl -L "https://github.com/docker/compose/releases/download/1.10.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 
-    - name: install docker-compose (son-monitor dependency)
-      shell: "{{ item }}"
-      with_items:
-        - chmod +x /usr/local/bin/docker-compose
+#    - name: install docker-compose (son-monitor dependency)
+#      shell: "{{ item }}"
+#      with_items:
+#        - chmod +x /usr/local/bin/docker-compose
 
     - name: install numpy (son-monitor dependency)
       pip: name=numpy state=latest executable=pip3

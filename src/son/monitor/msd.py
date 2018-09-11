@@ -207,7 +207,9 @@ class msd():
 
         metric_type = metric_group['metric_type']
         # set correct Prometheus query
-        query = compute2vnfquery[metric_type].query_template.format(vnf_id['vnf'])
+        vnf_name = vnf_id['vnf']
+        query = compute2vnfquery[metric_type].query_template.format(vnf_name, name=vnf_name,
+                                                                    id=self.vim.get_docker_id(vnf_name))
         unit = compute2vnfquery[metric_type].unit
         name = '@'.join([metric_type, vnf_id['vnf']])
         metric = Metric(metric_name=name, desc=desc, query=query, metric_type=metric_type, unit=unit)
@@ -225,7 +227,7 @@ class msd():
             flow_metric = metric2flow_metric[metric_type2]
             r = self.vim.monitor_interface(action='start', vnf_name=vnf_name + ':' + vnf_interface, metric=flow_metric)
             LOG.info('start metric ret:{0}'.format(r))
-        query = network2vnfquery[metric_type2].query_template.format(vnf_name, vnf_interface)
+        query = network2vnfquery[metric_type2].query_template.format(vnf_name, vnf_interface, name=vnf_name)
         # make default description
         desc = vnf_id.get("description")
         if not desc:

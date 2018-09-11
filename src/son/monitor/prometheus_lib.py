@@ -131,7 +131,7 @@ prometheus_metrics = read_yaml(srcfile)
 nsdlink_metrics = ['packet_rate', 'byte_rate', 'packet_count', 'byte_count',
                    'packet_rate_cadv', 'byte_rate_cadv', 'packet_count_cadv', 'byte_count_cadv']
 network_metrics = ['packet_rate', 'byte_rate', 'packet_count', 'byte_count',
-                   'packet_rate_cadv', 'byte_rate_cadv', 'packet_count_cadv', 'byte_count_cadv']
+                   'packet_rate_cadv', 'bitrate_cadv', 'packet_count_cadv', 'byte_count_cadv']
 #testvnf_metrics = ['packet_loss', 'jitter', 'throughput']
 testvnf_metrics = []
 compute_metrics = ['cpu', 'mem', 'host_cpu']

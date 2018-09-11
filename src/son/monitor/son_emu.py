@@ -488,3 +488,8 @@ class Emu():
                                    params=resource_dict)
         return response.text
 
+    def get_docker_id(self, vnf_name):
+        dc_label = self._find_dc(vnf_name)
+        vnf_status = get("{0}/restapi/compute/{1}/{2}".format(self.url, dc_label, vnf_name)).json()
+        return vnf_status['short_id']
+
