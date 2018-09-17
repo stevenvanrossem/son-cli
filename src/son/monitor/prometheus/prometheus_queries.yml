@@ -30,6 +30,9 @@ computequery:
   - metric_name: 'cpu'
     query_template: 'sum(rate(container_cpu_usage_seconds_total{{name="mn.{0}"}}[3s]))*100'
     unit: '%'
+  - metric_name: 'disk'
+    query_template: '(rate(container_fs_io_time_weighted_seconds_total{{name="mn.{0}"}}[3s]))'
+    unit: '%'
   - metric_name: 'mem'
     query_template: '(container_memory_working_set_bytes{{name="mn.{name}",id=~"/docker/{id}.*"}}/1000000)'
     unit: 'MB'
@@ -42,6 +45,9 @@ computequery:
   - metric_name: 'num_cores'
     query_template: 'machine_cpu_cores'
     unit: 'core(s)'
+  - metric_name: 'tcp_established_cadv'
+    query_template: 'container_network_tcp_usage_total{{name="mn.{0}",tcp_state="established"}}'
+    unit: 'connections'
 
 networkquery:
   - metric_name: 'tx_packet_rate'
@@ -80,6 +86,10 @@ networkquery:
   - metric_name: 'rx_bitrate_cadv'
     query_template: 'rate(container_network_receive_bytes_total{{id=~"/docker.*",name="mn.{0}",interface="{1}"}}[3s])*8e-6'
     unit: 'Mbit/s'
+  - metric_name: 'tx_packet_size_cadv'
+    query_template: 'rate(container_network_transmit_bytes_total{{name="mn.{0}",interface="{1}"}}[3s])/rate(container_network_transmit_packets_total{{name="mn.{0}",interface="{1}"}}[3s])'
+    unit: 'bytes/packet'
+
 
 
 testvnfquery:
@@ -93,10 +103,16 @@ testvnfquery:
     query_template: 'sonemu_bandwith_Mbitspersec{{vnf_name="{0}"}}'
     unit: 'Mbits/sec'
   - metric_name: 'cached_download_latency'
-    query_template: '1e6/avg(rate(cached_download_speed_sum{{vnf_name="{0}"}}[3s])/rate(cached_download_speed_count{{vnf_name="{0}"}}[3s]))'
+    query_template: '1e6/avg(sum(rate(cached_download_speed_sum{{vnf_name=~"{0}.*"}}[3s]))/sum(rate(cached_download_speed_count{{vnf_name=~"{0}.*"}}[3s])))'
     unit: 'MB/sec'
   - metric_name: 'non_cached_download_latency'
-    query_template: '1e6/avg(rate(non_cached_download_speed_sum{{vnf_name="{0}"}}[3s])/rate(non_cached_download_speed_count{{vnf_name="{0}"}}[3s]))'
+    query_template: '1e6/avg(sum(rate(non_cached_download_speed_sum{{vnf_name=~"{0}.*"}}[3s]))/sum(rate(non_cached_download_speed_count{{vnf_name=~"{0}.*"}}[3s])))'
+    unit: 'MB/sec'
+  - metric_name: 'cached_download_time'
+    query_template: 'avg(sum(rate(cached_download_time_sum{{vnf_name=~"{0}.*"}}[3s]))/sum(rate(cached_download_time_count{{vnf_name=~"{0}.*"}}[3s])))'
+    unit: 'MB/sec'
+  - metric_name: 'non_cached_download_time'
+    query_template: 'avg(sum(rate(non_cached_download_time_sum{{vnf_name=~"{0}.*"}}[3s]))/sum(rate(non_cached_download_time_count{{vnf_name=~"{0}.*"}}[3s])))'
     unit: 'MB/sec'
   - metric_name: 'cached_reqs_count'
     query_template: 'cached_reqs_count{{vnf_name="{0}"}}'

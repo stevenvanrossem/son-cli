@@ -10,7 +10,7 @@ scrape_configs:
   - job_name: 'cAdvisor'
     scrape_interval: 1s
     static_configs:
-      - targets: ['172.17.0.1:8081']
+      - targets: ['172.17.0.1:8080']
 
 # Pushgateway started in son-emu
   - job_name: 'PushGateway'
