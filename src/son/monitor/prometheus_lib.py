@@ -134,7 +134,8 @@ network_metrics = ['packet_rate', 'byte_rate', 'packet_count', 'byte_count',
                    'packet_rate_cadv', 'bitrate_cadv', 'packet_count_cadv', 'byte_count_cadv', 'packet_size_cadv']
 #testvnf_metrics = ['packet_loss', 'jitter', 'throughput']
 testvnf_metrics = []
-compute_metrics = ['cpu', 'mem', 'disk', 'host_cpu', 'tcp_established_cadv']
+compute_metrics = []
+#compute_metrics = ['cpu', 'mem', 'disk', 'host_cpu', 'tcp_established_cadv', 'tasks_uninterruptible_cadv']
 
 metric2flowquery = {}
 for metric in prometheus_metrics['flowquery']:
@@ -143,6 +144,7 @@ for metric in prometheus_metrics['flowquery']:
 compute2vnfquery = {}
 for metric in prometheus_metrics['computequery']:
     compute2vnfquery[metric['metric_name']] = MetricTemplate(**metric)
+    compute_metrics.append(metric['metric_name'])
 
 network2vnfquery = {}
 for metric in prometheus_metrics['networkquery']:

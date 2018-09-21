@@ -12,6 +12,12 @@ scrape_configs:
     static_configs:
       - targets: ['172.17.0.1:8080']
 
+# also scrape node exporter
+  - job_name: 'node'
+    scrape_interval: 1s
+    static_configs:
+      - targets: ['172.17.0.1:9100']
+
 # Pushgateway started in son-emu
   - job_name: 'PushGateway'
     scrape_interval: 1s
