@@ -18,6 +18,12 @@ scrape_configs:
     static_configs:
       - targets: ['172.17.0.1:9100']
 
+# also scrape locust exporter
+  - job_name: 'locust'
+    scrape_interval: 1s
+    static_configs:
+      - targets: ['172.17.0.1:8090']
+
 # Pushgateway started in son-emu
   - job_name: 'PushGateway'
     scrape_interval: 1s
