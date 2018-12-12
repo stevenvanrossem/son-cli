@@ -43,6 +43,10 @@ def read_yaml(path):
 
 
 def write_yaml(path, data):
+    file_path = os.path.dirname(path)
+    file_name = os.path.basename(path)
+    if not os.path.exists(file_path):
+        os.makedirs(file_path)
     with open(path, "w") as f:
         try:
             yaml.dump(data, f, default_flow_style=False)
